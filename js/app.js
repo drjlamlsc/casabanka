@@ -1,4 +1,4 @@
-const VERSION = 'v1.2 · 2026-05-12 14:45';
+const VERSION = 'v1.3 · 2026-05-12 15:10';
 
 // ─────────────────────────────────────────────
 // State
@@ -1379,10 +1379,10 @@ async function submitAddItem() {
 
     let draft;
     if (S.addPhoto) {
-      draft = await AI.parseItem(S.addPhoto, S.addDesc, layout, S.apiKey);
+      draft = await AI.parseItem(S.addPhoto, S.addDesc, layout, S.items, S.apiKey);
     } else {
       // Text-only fallback
-      draft = await AI.parseItem('', S.addDesc, layout, S.apiKey);
+      draft = await AI.parseItem('', S.addDesc, layout, S.items, S.apiKey);
     }
     S.addDraft = draft;
     S.addDraftEdits = {};

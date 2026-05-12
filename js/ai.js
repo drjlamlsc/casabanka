@@ -75,12 +75,28 @@ Be thorough — include every room and storage location you can identify. Use na
     return extractJSON(text);
   }
 
-  async function parseItem(photoBase64, description, layout, apiKey) {
+  async function parseItem(photoBase64, description, layout, existingItems, apiKey) {
+    // Strip photos from existing items — only need text fields for context
+    const itemContext = (existingItems || []).map(i => ({
+      name: i.name || '',
+      purpose: i.purpose || '',
+      roomId: i.roomId || null,
+      roomName: i.roomName || null,
+      areaId: i.areaId || null,
+      areaName: i.areaName || null,
+      spotId: i.spotId || null,
+      spotName: i.spotName || null,
+    }));
+
+    const existingSection = itemContext.length > 0
+      ? `\nExisting items already stored in this home (use these to infer location when the user references another item or says "with the X", "next to the Y", "same place as Z", "with the other tools", etc.):\n${JSON.stringify(itemContext, null, 2)}\n`
+      : '';
+
     const content = [
-      {
+      ...(photoBase64 ? [{
         type: 'image',
         source: { type: 'base64', media_type: 'image/jpeg', data: stripBase64Prefix(photoBase64) },
-      },
+      }] : []),
       {
         type: 'text',
         text: `You are helping catalog a home inventory item.
@@ -89,7 +105,7 @@ User's description: "${description}"
 
 Current home layout (use ONLY IDs and names from this):
 ${JSON.stringify(layout, null, 2)}
-
+${existingSection}
 Return ONLY a JSON object — no markdown, no explanation:
 {
   "name": "Short descriptive item name (2–5 words)",
@@ -105,8 +121,10 @@ Return ONLY a JSON object — no markdown, no explanation:
 }
 
 Rules:
-- Match location ONLY to existing entries in the layout above
-- If the mentioned location doesn't exist in the layout, set locationConfident: false and the unmatched fields to null, and set locationNote to a brief explanation
+- Match location ONLY to IDs and names that exist in the layout above
+- If the user references another item (e.g. "next to the drill", "with the tools", "same shelf as the router"), look it up in the existing items list and use that item's location
+- If the user references a category (e.g. "with the other power tools"), find where similar items are stored and use the same location
+- If location still cannot be determined, set locationConfident: false, unmatched fields to null, and locationNote to a brief explanation
 - Extract the item name from the photo and description combined`,
       },
     ];
