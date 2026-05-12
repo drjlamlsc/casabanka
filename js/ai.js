@@ -233,5 +233,63 @@ Rules:
     return JSON.parse(match[0]);
   }
 
-  return { analyzeLayout, parseItem, searchItems, interpretLocation, validateKey };
+  async function parseMultipleItems(photos, description, layout, existingItems, apiKey) {
+    const itemContext = (existingItems || []).map(i => ({
+      name: i.name || '', purpose: i.purpose || '',
+      roomId: i.roomId || null, roomName: i.roomName || null,
+      areaId: i.areaId || null, areaName: i.areaName || null,
+      spotId: i.spotId || null, spotName: i.spotName || null,
+    }));
+
+    const existingSection = itemContext.length
+      ? `\nExisting stored items (use for location inference):\n${JSON.stringify(itemContext)}\n`
+      : '';
+
+    const content = [
+      // Send each photo labelled by index
+      ...photos.map((p, i) => ({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: stripBase64Prefix(p) },
+      })),
+      {
+        type: 'text',
+        text: `You are analyzing ${photos.length} photos of home inventory items. Each photo is a separate item.
+${description ? `\nUser context: "${description}"\n` : ''}
+Home layout:
+${JSON.stringify(layout, null, 2)}
+${existingSection}
+Return a JSON array with one entry per photo, in the same order as the photos were provided.
+Return ONLY the JSON array — no markdown, no explanation:
+[
+  {
+    "photoIndex": 0,
+    "name": "Short item name (2–5 words)",
+    "purpose": "What it is and what it's used for (1–2 sentences)",
+    "roomId": "exact room id from layout or null",
+    "roomName": "exact room name or null",
+    "areaId": "exact area id or null",
+    "areaName": "exact area name or null",
+    "spotId": "exact spot id or null",
+    "spotName": "exact spot name or null",
+    "locationConfident": true,
+    "locationNote": null
+  }
+]
+
+Rules:
+- One entry per photo, in order
+- Match location ONLY to IDs and names in the layout
+- If user context mentions a location (e.g. "all from the garage"), apply it to all items unless a photo suggests otherwise
+- If an item references another stored item, use that item's location
+- Set locationConfident: false if location cannot be determined`,
+      },
+    ];
+
+    const text = await call(apiKey, [{ role: 'user', content }], 2048);
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('Could not parse items from AI response');
+    return JSON.parse(match[0]);
+  }
+
+  return { analyzeLayout, parseItem, parseMultipleItems, searchItems, interpretLocation, validateKey };
 })();

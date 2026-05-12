@@ -1,4 +1,4 @@
-const VERSION = 'v1.5 · 2026-05-12 16:00';
+const VERSION = 'v1.6 · 2026-05-12 16:30';
 
 // ─────────────────────────────────────────────
 // State
@@ -29,10 +29,10 @@ let S = {
   editingLayout: null,  // deep-cloned layout being edited
   layoutEditSource: 'setup', // 'setup' | 'settings' — where to go back to on cancel
   // add-item flow
-  addPhoto: null,       // base64
+  addPhotos: [],        // array of base64 strings
   addDesc: '',
-  addDraft: null,       // AI result
-  addDraftEdits: {},    // user overrides
+  addDrafts: [],        // array of AI results, one per photo
+  addDraftEdits: [],    // array of user-override objects
   // search
   query: '',
   results: [],
@@ -499,117 +499,130 @@ function emptyRow(msg) {
 }
 
 function scrAddItem() {
+  const photos = S.addPhotos || [];
+  const MAX = 10;
+  const canSubmit = photos.length > 0 || S.addDesc.trim();
+
+  const thumbs = photos.map((p, i) => `
+    <div class="photo-thumb-wrap">
+      <img class="photo-thumb" src="${p}" alt="Photo ${i + 1}">
+      <button class="photo-thumb-remove" data-action="remove-photo" data-index="${i}">✕</button>
+    </div>`).join('');
+
   return `
     <div class="header safe-top">
       <span class="header-back" data-action="go-dashboard">✕ Cancel</span>
-      <span class="header-title">Log an Item</span>
+      <span class="header-title">Log Items</span>
     </div>
     <div class="content safe-bottom">
+
       <div class="section">
-        <div class="section-title">Photo</div>
-        ${S.addPhoto
-          ? `<div class="photo-preview-container">
-              <img class="photo-preview" src="${S.addPhoto}" alt="Item photo">
-              <button class="photo-remove-btn" data-action="remove-photo">✕</button>
-            </div>`
-          : `<label class="photo-upload" for="itemPhoto">
-              <div class="photo-upload-icon">📷</div>
-              <div class="photo-upload-text">Tap to take or upload a photo</div>
-              <div class="photo-upload-hint">Optional but recommended</div>
-            </label>
-            <input id="itemPhoto" type="file" accept="image/*" capture="environment" style="display:none" data-action="photo-selected">`}
+        <div class="section-title">Photos <span style="font-weight:400;text-transform:none;font-size:12px;color:var(--txt3)">${photos.length}/${MAX}</span></div>
+        ${photos.length > 0 ? `<div class="photo-thumb-grid">${thumbs}</div>` : ''}
+        ${photos.length < MAX ? `
+          <label class="photo-upload ${photos.length > 0 ? 'photo-upload-compact' : ''}" for="itemPhoto" style="margin-top:${photos.length > 0 ? '10px' : '0'}">
+            <div class="photo-upload-icon">${photos.length > 0 ? '➕' : '📷'}</div>
+            <div class="photo-upload-text">${photos.length > 0 ? 'Add more photos' : 'Tap to add photos'}</div>
+            ${photos.length === 0 ? `<div class="photo-upload-hint">Select multiple — one item per photo</div>` : ''}
+          </label>
+          <input id="itemPhoto" type="file" accept="image/*" multiple style="display:none" data-action="photo-selected">
+        ` : `<p class="text-sm text-muted mt-sm text-center">Maximum ${MAX} photos reached</p>`}
       </div>
 
       <div class="section">
-        <div class="section-title">Description</div>
-        <textarea id="itemDesc" class="form-textarea" placeholder="Describe the item and where you're storing it, e.g. "my cordless drill, for DIY projects, storing it in the garage cabinet on the middle shelf"" rows="5" data-action="desc-input">${esc(S.addDesc)}</textarea>
+        <div class="section-title">Context <span style="font-weight:400;text-transform:none;font-size:12px;color:var(--txt3)">optional</span></div>
+        <textarea id="itemDesc" class="form-textarea" rows="3"
+          placeholder='Optional context for all photos, e.g. "all from the garage" or "tools stored in the shed"'>${esc(S.addDesc)}</textarea>
       </div>
 
       <div class="alert alert-info mb-md">
         <span class="alert-icon">🤖</span>
         <div class="alert-content">
-          <div class="alert-title">AI will fill in the details</div>
-          <div class="alert-text">Claude will extract the item name, purpose, and location from your photo and description. You can edit everything on the next screen.</div>
+          <div class="alert-title">AI analyses each photo separately</div>
+          <div class="alert-text">Claude identifies the item in each photo and suggests its name, purpose, and location. You can edit everything before saving.</div>
         </div>
       </div>
 
-      <button class="btn btn-primary btn-full" data-action="submit-add-item" ${!S.addPhoto && !S.addDesc ? 'disabled' : ''}>
-        Continue with AI →
+      <button class="btn btn-primary btn-full" data-action="submit-add-item" ${!canSubmit ? 'disabled' : ''}>
+        Analyse ${photos.length > 1 ? photos.length + ' photos' : 'with AI'} →
       </button>
 
-      <div class="loading-overlay hidden" id="addItemLoading" style="position:fixed;inset:0;background:rgba(255,255,255,0.9);z-index:300">
+      <div class="loading-overlay hidden" id="addItemLoading" style="position:fixed;inset:0;background:rgba(255,255,255,0.92);z-index:300">
         <div class="spinner"></div>
-        <p>Claude is identifying your item…</p>
+        <p id="addItemLoadingMsg">Claude is analysing your photos…</p>
       </div>
     </div>`;
 }
 
 function scrAddConfirm() {
-  const d = S.addDraft || {};
-  const e = S.addDraftEdits || {};
-  const name = e.name !== undefined ? e.name : (d.name || '');
-  const purpose = e.purpose !== undefined ? e.purpose : (d.purpose || '');
-  const notes = e.notes !== undefined ? e.notes : (d.notes || '');
-  const roomName = e.roomName !== undefined ? e.roomName : (d.roomName || '');
-  const areaName = e.areaName !== undefined ? e.areaName : (d.areaName || '');
-  const spotName = e.spotName !== undefined ? e.spotName : (d.spotName || '');
-  const noMatch = d.locationConfident === false;
+  const drafts = S.addDrafts || [];
+  const edits  = S.addDraftEdits || [];
+  const opts   = buildLocationOptions();
+  const active = drafts.filter((_, i) => edits[i]?.removed !== true);
 
-  const locationOptions = buildLocationOptions();
+  const cards = drafts.map((d, i) => {
+    if (edits[i]?.removed) return '';
+    const e = edits[i] || {};
+    const val = f => e[f] !== undefined ? e[f] : (d[f] || '');
 
-  return `
-    <div class="header safe-top">
-      <span class="header-back" data-action="back-to-add-item">‹ Edit</span>
-      <span class="header-title">Confirm Item</span>
-    </div>
-    <div class="content safe-bottom">
-      ${S.addPhoto ? `<img src="${S.addPhoto}" style="width:100%;max-height:220px;object-fit:cover;border-radius:var(--radius-lg);margin-bottom:var(--spacing-md)" alt="Item photo">` : ''}
-
-      ${noMatch ? `<div class="alert alert-warning mb-md">
-        <span class="alert-icon">⚠️</span>
-        <div class="alert-content">
-          <div class="alert-title">Location not matched</div>
-          <div class="alert-text">${esc(d.locationNote || "Claude couldn't match the location to your layout. Please select one below or leave blank.")}</div>
+    return `
+    <div class="multi-item-card" data-card-index="${i}">
+      <div class="multi-item-card-header">
+        ${S.addPhotos[i] ? `<img src="${S.addPhotos[i]}" class="multi-item-thumb" alt="Photo ${i+1}">` : `<div class="multi-item-thumb-placeholder">📦</div>`}
+        <div class="multi-item-card-title">
+          <span class="section-title" style="margin:0">Item ${i + 1}</span>
+          ${d.locationConfident === false ? `<span class="badge-warn">⚠ Location unmatched</span>` : ''}
         </div>
-      </div>` : ''}
+        <button class="btn btn-ghost btn-sm text-danger" data-action="remove-draft-item" data-index="${i}" title="Remove">✕</button>
+      </div>
 
       <div class="form-group">
         <label class="form-label">Item Name *</label>
-        <input class="form-input" id="cfName" value="${esc(name)}" placeholder="e.g. Cordless Drill" data-field="name">
+        <input class="form-input" data-ci="${i}" data-cf="name" value="${esc(val('name'))}" placeholder="Item name">
       </div>
       <div class="form-group">
-        <label class="form-label">Purpose / Description</label>
-        <textarea class="form-textarea" id="cfPurpose" rows="3" placeholder="What it's for…" data-field="purpose">${esc(purpose)}</textarea>
+        <label class="form-label">Purpose</label>
+        <textarea class="form-textarea" rows="2" data-ci="${i}" data-cf="purpose" placeholder="What it's for…">${esc(val('purpose'))}</textarea>
       </div>
-
-      <div class="section-title" style="margin-top:var(--spacing-md)">Storage Location</div>
       <div class="form-group">
         <label class="form-label">Room</label>
-        <select class="form-select" id="cfRoom" data-field="roomName">
+        <select class="form-select" data-ci="${i}" data-cf="roomSel">
           <option value="">— not specified —</option>
-          ${locationOptions.rooms.map(r => `<option value="${esc(r.id)}|${esc(r.name)}" ${d.roomId === r.id || roomName === r.name ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
+          ${opts.rooms.map(r => `<option value="${esc(r.id)}|${esc(r.name)}" ${(e.roomId||d.roomId)===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">Area</label>
-        <select class="form-select" id="cfArea" data-field="areaName">
+        <select class="form-select" data-ci="${i}" data-cf="areaSel">
           <option value="">— not specified —</option>
-          ${locationOptions.areas.map(a => `<option value="${esc(a.roomId)}|${esc(a.id)}|${esc(a.name)}" ${d.areaId === a.id || areaName === a.name ? 'selected' : ''}>${esc(a.roomName)} › ${esc(a.name)}</option>`).join('')}
+          ${opts.areas.map(a => `<option value="${esc(a.roomId)}|${esc(a.id)}|${esc(a.name)}" ${(e.areaId||d.areaId)===a.id?'selected':''}>${esc(a.roomName)} › ${esc(a.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">Spot</label>
-        <select class="form-select" id="cfSpot" data-field="spotName">
+        <select class="form-select" data-ci="${i}" data-cf="spotSel">
           <option value="">— not specified —</option>
-          ${locationOptions.spots.map(s => `<option value="${esc(s.areaId)}|${esc(s.id)}|${esc(s.name)}" ${d.spotId === s.id || spotName === s.name ? 'selected' : ''}>${esc(s.roomName)} › ${esc(s.areaName)} › ${esc(s.name)}</option>`).join('')}
+          ${opts.spots.map(s => `<option value="${esc(s.areaId)}|${esc(s.id)}|${esc(s.name)}" ${(e.spotId||d.spotId)===s.id?'selected':''}>${esc(s.roomName)} › ${esc(s.areaName)} › ${esc(s.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
-        <label class="form-label">Notes (optional)</label>
-        <input class="form-input" id="cfNotes" value="${esc(notes)}" placeholder="Any extra notes…" data-field="notes">
+        <label class="form-label">Notes</label>
+        <input class="form-input" data-ci="${i}" data-cf="notes" value="${esc(val('notes'))}" placeholder="Optional notes…">
       </div>
+    </div>`;
+  }).join('');
 
-      <button class="btn btn-primary btn-full mt-md" data-action="save-item">Save Item</button>
+  return `
+    <div class="header safe-top">
+      <span class="header-back" data-action="back-to-add-item">‹ Edit</span>
+      <span class="header-title">Review ${active.length} Item${active.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div class="content safe-bottom">
+      ${cards}
+      <button class="btn btn-primary btn-full mt-md" data-action="save-all-items">
+        Save ${active.length} Item${active.length !== 1 ? 's' : ''} →
+      </button>
+      <div style="height:20px"></div>
     </div>`;
 }
 
@@ -1014,7 +1027,7 @@ function handleClick(e) {
     case 'back-to-homes':      exitHome(); break;
     case 'go-dashboard':       go('dashboard'); break;
     case 'go-browse':          go('browse', { browsePath: [] }); break;
-    case 'go-add-item':        go('add-item', { addPhoto: null, addDesc: '', addDraft: null, addDraftEdits: {} }); break;
+    case 'go-add-item':        go('add-item', { addPhotos: [], addDesc: '', addDrafts: [], addDraftEdits: [] }); break;
     case 'go-settings':        go('settings'); break;
 
     // API key
@@ -1059,10 +1072,11 @@ function handleClick(e) {
     case 'browse-to':          browseTo(parseInt(el.dataset.depth)); break;
 
     // Add item
-    case 'remove-photo':       S.addPhoto = null; render(); break;
+    case 'remove-photo':       S.addPhotos.splice(parseInt(el.dataset.index), 1); render(); break;
+    case 'remove-draft-item':  removeDraftItem(parseInt(el.dataset.index)); break;
     case 'back-to-add-item':   go('add-item'); break;
     case 'submit-add-item':    submitAddItem(); break;
-    case 'save-item':          saveItem(); break;
+    case 'save-all-items':     saveAllItems(); break;
 
     // Item detail
     case 'view-item':          viewItem(el.dataset.id); break;
@@ -1096,10 +1110,11 @@ function handleInput(e) {
     doSearch(S.query);
     scheduleAiSearch(S.query);
   }
-  // Sync confirm-screen edits to state without re-rendering (preserve focus)
-  const field = el.dataset.field;
-  if (field && S.screen === 'add-confirm') {
-    S.addDraftEdits[field] = el.value;
+  // Multi-item confirm card edits
+  if (S.screen === 'add-confirm' && el.dataset.ci !== undefined && el.dataset.cf) {
+    const i = parseInt(el.dataset.ci);
+    if (!S.addDraftEdits[i]) S.addDraftEdits[i] = {};
+    S.addDraftEdits[i][el.dataset.cf] = el.value;
   }
   // Keep move AI input in sync
   if (el.id === 'moveAiInput') S.moveAiDesc = el.value;
@@ -1116,23 +1131,27 @@ function handleChange(e) {
     if (file) importData(file);
   }
   if (el.dataset.action === 'photo-selected' || el.id === 'itemPhoto') {
-    const file = el.files[0];
-    if (file) handlePhotoSelected(file);
+    if (el.files?.length) handlePhotoSelected(el.files);
   }
-  // Location select dropdowns in confirm screen
-  if (el.id === 'cfRoom' && el.value) {
-    const [id, name] = el.value.split('|');
-    S.addDraftEdits.roomId = id; S.addDraftEdits.roomName = name;
-  }
-  if (el.id === 'cfArea' && el.value) {
-    const [rId, id, name] = el.value.split('|');
-    S.addDraftEdits.areaId = id; S.addDraftEdits.areaName = name;
-    S.addDraftEdits.roomId = rId;
-  }
-  if (el.id === 'cfSpot' && el.value) {
-    const [aId, id, name] = el.value.split('|');
-    S.addDraftEdits.spotId = id; S.addDraftEdits.spotName = name;
-    S.addDraftEdits.areaId = aId;
+  // Multi-item confirm card location selects
+  if (S.screen === 'add-confirm' && el.dataset.ci !== undefined && el.dataset.cf) {
+    const i = parseInt(el.dataset.ci);
+    if (!S.addDraftEdits[i]) S.addDraftEdits[i] = {};
+    const f = el.dataset.cf;
+    if (f === 'roomSel' && el.value) {
+      const [id, name] = el.value.split('|');
+      S.addDraftEdits[i].roomId = id; S.addDraftEdits[i].roomName = name;
+    }
+    if (f === 'areaSel' && el.value) {
+      const [rId, id, name] = el.value.split('|');
+      S.addDraftEdits[i].areaId = id; S.addDraftEdits[i].areaName = name;
+      if (!S.addDraftEdits[i].roomId) S.addDraftEdits[i].roomId = rId;
+    }
+    if (f === 'spotSel' && el.value) {
+      const [aId, id, name] = el.value.split('|');
+      S.addDraftEdits[i].spotId = id; S.addDraftEdits[i].spotName = name;
+      if (!S.addDraftEdits[i].areaId) S.addDraftEdits[i].areaId = aId;
+    }
   }
   // Move item manual dropdowns — re-render modal to cascade area/spot options
   if (el.id === 'moveRoom') {
@@ -1436,93 +1455,113 @@ function refreshTree() {
 }
 
 // ── Add item ──
-async function handlePhotoSelected(file) {
-  const compressed = await compressImage(file);
-  S.addPhoto = compressed;
+async function handlePhotoSelected(files) {
+  const fileList = files instanceof FileList ? Array.from(files) : [files];
+  const MAX = 10;
+  const remaining = MAX - (S.addPhotos || []).length;
+  const toProcess = fileList.slice(0, remaining);
+  for (const f of toProcess) {
+    const compressed = await compressImage(f);
+    if (compressed) S.addPhotos.push(compressed);
+  }
   render();
 }
 
 async function submitAddItem() {
-  if (!S.addPhoto && !S.addDesc.trim()) return;
+  const photos = S.addPhotos || [];
+  const desc = document.getElementById('itemDesc')?.value || S.addDesc;
+  S.addDesc = desc;
+  if (!photos.length && !desc.trim()) return;
   if (!S.apiKey) { openModal({ type: 'api-key-edit' }); return; }
 
   const loading = document.getElementById('addItemLoading');
+  const msgEl   = document.getElementById('addItemLoadingMsg');
   if (loading) loading.classList.remove('hidden');
-  const btn = document.querySelector('[data-action="submit-add-item"]');
-  if (btn) btn.disabled = true;
-
-  // Read text desc from DOM if not already synced
-  const descEl = document.getElementById('itemDesc');
-  if (descEl) S.addDesc = descEl.value;
+  if (msgEl) msgEl.textContent = `Claude is analysing ${photos.length || 1} photo${photos.length !== 1 ? 's' : ''}…`;
 
   try {
-    const photoForAI = S.addPhoto || '';
     const layout = S.layout || { rooms: [] };
+    let drafts;
 
-    let draft;
-    if (S.addPhoto) {
-      draft = await AI.parseItem(S.addPhoto, S.addDesc, layout, S.items, S.apiKey);
+    if (photos.length > 1) {
+      drafts = await AI.parseMultipleItems(photos, desc, layout, S.items, S.apiKey);
+    } else if (photos.length === 1) {
+      const single = await AI.parseItem(photos[0], desc, layout, S.items, S.apiKey);
+      drafts = [{ ...single, photoIndex: 0 }];
     } else {
-      // Text-only fallback
-      draft = await AI.parseItem('', S.addDesc, layout, S.items, S.apiKey);
+      const single = await AI.parseItem('', desc, layout, S.items, S.apiKey);
+      drafts = [{ ...single, photoIndex: 0 }];
     }
-    S.addDraft = draft;
-    S.addDraftEdits = {};
+
+    S.addDrafts     = drafts;
+    S.addDraftEdits = drafts.map(() => ({}));
     go('add-confirm');
   } catch (err) {
     if (loading) loading.classList.add('hidden');
-    if (btn) btn.disabled = false;
     alert('AI error: ' + err.message);
   }
 }
 
-async function saveItem() {
-  const d = S.addDraft || {};
-  const e = S.addDraftEdits || {};
+function removeDraftItem(index) {
+  if (!S.addDraftEdits[index]) S.addDraftEdits[index] = {};
+  S.addDraftEdits[index].removed = true;
+  render();
+}
 
-  const nameVal = document.getElementById('cfName')?.value?.trim() || e.name || d.name || '';
-  const purposeVal = document.getElementById('cfPurpose')?.value?.trim() || e.purpose || d.purpose || '';
-  const notesVal = document.getElementById('cfNotes')?.value?.trim() || e.notes || '';
+async function saveAllItems() {
+  const drafts = S.addDrafts || [];
+  const edits  = S.addDraftEdits || [];
+  const toSave = [];
 
-  if (!nameVal) { alert('Please enter an item name.'); return; }
+  // Collect current DOM values per card before processing
+  document.querySelectorAll('.multi-item-card').forEach(card => {
+    const i = parseInt(card.dataset.cardIndex);
+    if (!S.addDraftEdits[i]) S.addDraftEdits[i] = {};
+    card.querySelectorAll('[data-ci][data-cf]').forEach(el => {
+      S.addDraftEdits[i][el.dataset.cf] = el.value;
+    });
+  });
 
-  // Parse location from selects
-  const roomSel = document.getElementById('cfRoom');
-  const areaSel = document.getElementById('cfArea');
-  const spotSel = document.getElementById('cfSpot');
+  for (let i = 0; i < drafts.length; i++) {
+    if (edits[i]?.removed) continue;
+    const d = drafts[i] || {};
+    const e = edits[i]  || {};
+    const val = f => (e[f] !== undefined && e[f] !== '') ? e[f] : (d[f] || '');
 
-  let roomId = '', roomName = '', areaId = '', areaName = '', spotId = '', spotName = '';
+    const name = val('name');
+    if (!name.trim()) { alert(`Item ${i + 1} is missing a name. Please fill it in.`); return; }
 
-  if (roomSel?.value) { const [id, name] = roomSel.value.split('|'); roomId = id; roomName = name; }
-  if (areaSel?.value) { const [rId, id, name] = areaSel.value.split('|'); areaId = id; areaName = name; if (!roomId) roomId = rId; }
-  if (spotSel?.value) { const [aId, id, name] = spotSel.value.split('|'); spotId = id; spotName = name; if (!areaId) areaId = aId; }
+    // Parse location from select values stored in edits
+    let roomId = val('roomId'), roomName = val('roomName');
+    let areaId = val('areaId'), areaName = val('areaName');
+    let spotId = val('spotId'), spotName = val('spotName');
 
-  // Fallback to draft values if selects are empty
-  if (!roomId) { roomId = d.roomId || ''; roomName = d.roomName || ''; }
-  if (!areaId) { areaId = d.areaId || ''; areaName = d.areaName || ''; }
-  if (!spotId) { spotId = d.spotId || ''; spotName = d.spotName || ''; }
+    if (e.roomSel) { const [id, nm] = e.roomSel.split('|'); roomId = id; roomName = nm; }
+    if (e.areaSel) { const [rId, id, nm] = e.areaSel.split('|'); areaId = id; areaName = nm; if (!roomId) roomId = rId; }
+    if (e.spotSel) { const [aId, id, nm] = e.spotSel.split('|'); spotId = id; spotName = nm; if (!areaId) areaId = aId; }
 
-  const item = {
-    id: uid(),
-    homeId: S.homeId,
-    name: nameVal,
-    purpose: purposeVal,
-    notes: notesVal,
-    roomId, roomName,
-    areaId, areaName,
-    spotId, spotName,
-    photoData: S.addPhoto || null,
-    createdAt: Date.now(),
-  };
+    toSave.push({
+      id: uid(), homeId: S.homeId,
+      name: name.trim(),
+      purpose: val('purpose'),
+      notes: val('notes'),
+      roomId, roomName, areaId, areaName, spotId, spotName,
+      photoData: S.addPhotos[i] || null,
+      createdAt: Date.now() + i,
+    });
+  }
 
-  await DB.saveItem(item);
-  S.items = await DB.getItemsByHome(S.homeId);
-  S.addPhoto = null;
-  S.addDesc = '';
-  S.addDraft = null;
+  if (!toSave.length) { go('dashboard'); return; }
+
+  for (const item of toSave) await DB.saveItem(item);
+  S.items       = await DB.getItemsByHome(S.homeId);
+  S.addPhotos   = [];
+  S.addDesc     = '';
+  S.addDrafts   = [];
+  S.addDraftEdits = [];
   scheduleDriveSync();
   go('dashboard');
-  showToast('Item saved!');
+  showToast(`Saved ${toSave.length} item${toSave.length !== 1 ? 's' : ''} ✓`);
 }
 
 async function viewItem(id) {
