@@ -189,5 +189,49 @@ Return ONLY a JSON array of matching IDs, e.g. ["id1", "id2"]. Return [] if noth
     return true;
   }
 
-  return { analyzeLayout, parseItem, searchItems, validateKey };
+  async function interpretLocation(description, layout, existingItems, apiKey) {
+    const itemContext = (existingItems || []).map(i => ({
+      name: i.name || '',
+      purpose: i.purpose || '',
+      roomId: i.roomId || null, roomName: i.roomName || null,
+      areaId: i.areaId || null, areaName: i.areaName || null,
+      spotId: i.spotId || null, spotName: i.spotName || null,
+    }));
+
+    const text = await call(apiKey, [{
+      role: 'user',
+      content: `You are helping relocate an item in a home inventory.
+
+The user says: "${description}"
+
+Home layout:
+${JSON.stringify(layout, null, 2)}
+
+Existing items (use these if the user references another item or category):
+${JSON.stringify(itemContext, null, 2)}
+
+Return ONLY a JSON object — no markdown, no explanation:
+{
+  "roomId": "exact room id from layout or null",
+  "roomName": "exact room name from layout or null",
+  "areaId": "exact area id from layout or null",
+  "areaName": "exact area name from layout or null",
+  "spotId": "exact spot id from layout or null",
+  "spotName": "exact spot name from layout or null",
+  "confident": true,
+  "note": null
+}
+
+Rules:
+- Match ONLY to IDs and names in the layout above
+- If the description references another item (e.g. "next to the drill"), find that item in the existing items list and use its location
+- If confident is false, set unmatched fields to null and explain in note`,
+    }], 512);
+
+    const match = text.match(/\{[\s\S]*?\}/);
+    if (!match) throw new Error('Could not parse location from AI response');
+    return JSON.parse(match[0]);
+  }
+
+  return { analyzeLayout, parseItem, searchItems, interpretLocation, validateKey };
 })();

@@ -1,4 +1,4 @@
-const VERSION = 'v1.3 · 2026-05-12 15:10';
+const VERSION = 'v1.4 · 2026-05-12 15:30';
 
 // ─────────────────────────────────────────────
 // State
@@ -37,6 +37,11 @@ let S = {
   searchAi: false,
   // detail view
   detailItem: null,
+  // move item
+  moveItemId: null,
+  moveAiDesc: '',
+  moveLocation: { roomId: '', roomName: '', areaId: '', areaName: '', spotId: '', spotName: '' },
+  moveAiWorking: false,
 };
 
 // ─────────────────────────────────────────────
@@ -84,6 +89,7 @@ function buildModal() {
     case 'location-pick':  return modalLocationPick();
     case 'menu':           return modalMenu();
     case 'drive-setup':    return modalDriveSetup();
+    case 'move-item':      return modalMoveItem();
     default:               return '';
   }
 }
@@ -643,18 +649,19 @@ function scrItemDetail() {
       <button class="btn btn-ghost btn-sm text-danger" data-action="open-delete-item" data-id="${item.id}">Delete</button>
     </div>
     <div class="content safe-bottom">
-      ${item.photoData ? `<img src="${item.photoData}" style="width:100%;max-height:300px;object-fit:cover;border-radius:var(--radius-lg);margin-bottom:var(--spacing-md)" alt="${esc(item.name)}">` : ''}
+      ${item.photoData ? `<img src="${item.photoData}" style="width:100%;max-height:300px;object-fit:cover;border-radius:var(--r-lg);margin-bottom:var(--sp-md)" alt="${esc(item.name)}">` : ''}
 
-      <h2 style="margin-bottom:var(--spacing-sm)">${esc(item.name || 'Unnamed')}</h2>
-      ${item.purpose ? `<p class="text-muted" style="margin-bottom:var(--spacing-md)">${esc(item.purpose)}</p>` : ''}
+      <h2 style="margin-bottom:var(--sp-sm)">${esc(item.name || 'Unnamed')}</h2>
+      ${item.purpose ? `<p class="text-muted" style="margin-bottom:var(--sp-md)">${esc(item.purpose)}</p>` : ''}
 
-      ${loc ? `<div class="alert alert-info mb-md">
+      <div class="alert ${loc ? 'alert-info' : 'alert-warning'} mb-md">
         <span class="alert-icon">📍</span>
         <div class="alert-content">
           <div class="alert-title">Storage Location</div>
-          <div class="alert-text">${esc(loc)}</div>
+          <div class="alert-text">${loc ? esc(loc) : 'No location set'}</div>
         </div>
-      </div>` : ''}
+        <button class="btn btn-sm btn-secondary" data-action="open-move-item" data-id="${item.id}">Move</button>
+      </div>
 
       ${item.notes ? `<div class="card mb-md">
         <div class="section-title" style="margin-bottom:4px">Notes</div>
@@ -860,6 +867,75 @@ function modalLocationPick() {
   return '';  // handled inline in confirm screen via select dropdowns
 }
 
+function modalMoveItem() {
+  const opts = buildLocationOptions();
+  const loc = S.moveLocation;
+  const working = S.moveAiWorking;
+
+  return `<div class="modal-overlay">
+    <div class="modal" style="max-height:92dvh;overflow-y:auto">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <span class="modal-title">Move Item</span>
+        <button class="modal-close" data-action="close-modal">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="section-title">✦ AI — describe the new location</div>
+        <div style="display:flex;gap:var(--sp-sm);margin-bottom:var(--sp-md)">
+          <input class="form-input" id="moveAiInput" placeholder='e.g. "on the top shelf in the garage" or "with the other tools"'
+            value="${esc(S.moveAiDesc)}" style="flex:1">
+          <button class="btn btn-primary" data-action="ai-interpret-location" ${working ? 'disabled' : ''} style="flex-shrink:0;white-space:nowrap">
+            ${working ? '…' : '✦ Ask AI'}
+          </button>
+        </div>
+
+        ${loc.roomName || loc.areaName || loc.spotName ? `
+        <div class="alert alert-info mb-md">
+          <span class="alert-icon">📍</span>
+          <div class="alert-content">
+            <div class="alert-title">AI suggested</div>
+            <div class="alert-text">${esc([loc.roomName, loc.areaName, loc.spotName].filter(Boolean).join(' › '))}</div>
+          </div>
+        </div>` : ''}
+
+        <div class="move-divider">or pick manually</div>
+
+        <div class="form-group">
+          <label class="form-label">Room</label>
+          <select class="form-select" id="moveRoom" data-move-field="room">
+            <option value="">— not specified —</option>
+            ${opts.rooms.map(r => `<option value="${esc(r.id)}|${esc(r.name)}" ${loc.roomId === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Area</label>
+          <select class="form-select" id="moveArea" data-move-field="area">
+            <option value="">— not specified —</option>
+            ${opts.areas
+              .filter(a => !loc.roomId || a.roomId === loc.roomId)
+              .map(a => `<option value="${esc(a.roomId)}|${esc(a.id)}|${esc(a.name)}" ${loc.areaId === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Spot</label>
+          <select class="form-select" id="moveSpot" data-move-field="spot">
+            <option value="">— not specified —</option>
+            ${opts.spots
+              .filter(s => !loc.areaId || s.areaId === loc.areaId)
+              .map(s => `<option value="${esc(s.areaId)}|${esc(s.id)}|${esc(s.name)}" ${loc.spotId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          </select>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary flex-1" data-action="close-modal">Cancel</button>
+        <button class="btn btn-primary flex-1" data-action="save-move-item">Save Location</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function modalDriveSetup() {
   return `<div class="modal-overlay">
     <div class="modal" style="max-height:90dvh;overflow-y:auto">
@@ -1015,6 +1091,9 @@ function handleClick(e) {
 
     // Item detail
     case 'view-item':          viewItem(el.dataset.id); break;
+    case 'open-move-item':     openMoveItem(el.dataset.id); break;
+    case 'ai-interpret-location': aiInterpretLocation(); break;
+    case 'save-move-item':     saveMoveItem(); break;
     case 'open-delete-item':   openModal({ type: 'delete-item', itemId: el.dataset.id }); break;
     case 'confirm-delete-item': confirmDeleteItem(el.dataset.id); break;
 
@@ -1048,6 +1127,8 @@ function handleInput(e) {
   if (field && S.screen === 'add-confirm') {
     S.addDraftEdits[field] = el.value;
   }
+  // Keep move AI input in sync
+  if (el.id === 'moveAiInput') S.moveAiDesc = el.value;
 }
 
 function handleChange(e) {
@@ -1078,6 +1159,33 @@ function handleChange(e) {
     const [aId, id, name] = el.value.split('|');
     S.addDraftEdits.spotId = id; S.addDraftEdits.spotName = name;
     S.addDraftEdits.areaId = aId;
+  }
+  // Move item manual dropdowns — re-render modal to cascade area/spot options
+  if (el.id === 'moveRoom') {
+    if (el.value) {
+      const [id, name] = el.value.split('|');
+      S.moveLocation = { roomId: id, roomName: name, areaId: '', areaName: '', spotId: '', spotName: '' };
+    } else {
+      S.moveLocation = { roomId: '', roomName: '', areaId: '', areaName: '', spotId: '', spotName: '' };
+    }
+    openModal({ type: 'move-item' });
+  }
+  if (el.id === 'moveArea') {
+    if (el.value) {
+      const [rId, id, name] = el.value.split('|');
+      S.moveLocation = { ...S.moveLocation, roomId: rId, areaId: id, areaName: name, spotId: '', spotName: '' };
+    } else {
+      S.moveLocation = { ...S.moveLocation, areaId: '', areaName: '', spotId: '', spotName: '' };
+    }
+    openModal({ type: 'move-item' });
+  }
+  if (el.id === 'moveSpot') {
+    if (el.value) {
+      const [aId, id, name] = el.value.split('|');
+      S.moveLocation = { ...S.moveLocation, areaId: aId, spotId: id, spotName: name };
+    } else {
+      S.moveLocation = { ...S.moveLocation, spotId: '', spotName: '' };
+    }
   }
 }
 
@@ -1448,6 +1556,68 @@ async function viewItem(id) {
   if (!item) return;
   S.detailItem = item;
   go('item-detail');
+}
+
+function openMoveItem(id) {
+  S.moveItemId = id;
+  S.moveAiDesc = '';
+  S.moveAiWorking = false;
+  // Pre-fill with current location
+  const item = S.detailItem;
+  S.moveLocation = {
+    roomId: item?.roomId || '', roomName: item?.roomName || '',
+    areaId: item?.areaId || '', areaName: item?.areaName || '',
+    spotId: item?.spotId || '', spotName: item?.spotName || '',
+  };
+  openModal({ type: 'move-item' });
+}
+
+async function aiInterpretLocation() {
+  const desc = document.getElementById('moveAiInput')?.value?.trim();
+  if (!desc) { alert('Please describe the new location.'); return; }
+  S.moveAiDesc = desc;
+  S.moveAiWorking = true;
+  openModal({ type: 'move-item' });
+  try {
+    const result = await AI.interpretLocation(desc, S.layout, S.items, S.apiKey);
+    S.moveLocation = {
+      roomId: result.roomId || '', roomName: result.roomName || '',
+      areaId: result.areaId || '', areaName: result.areaName || '',
+      spotId: result.spotId || '', spotName: result.spotName || '',
+    };
+    if (!result.confident) showToast('AI wasn\'t sure — please verify the location');
+  } catch (err) {
+    alert('AI error: ' + err.message);
+  }
+  S.moveAiWorking = false;
+  openModal({ type: 'move-item' });
+}
+
+async function saveMoveItem() {
+  // Read current select values from DOM before closing modal
+  const roomSel = document.getElementById('moveRoom');
+  const areaSel = document.getElementById('moveArea');
+  const spotSel = document.getElementById('moveSpot');
+
+  let loc = { ...S.moveLocation };
+  if (roomSel?.value) { const [id, name] = roomSel.value.split('|'); loc.roomId = id; loc.roomName = name; }
+  if (areaSel?.value) { const [rId, id, name] = areaSel.value.split('|'); loc.areaId = id; loc.areaName = name; if (!loc.roomId) loc.roomId = rId; }
+  if (spotSel?.value) { const [aId, id, name] = spotSel.value.split('|'); loc.spotId = id; loc.spotName = name; if (!loc.areaId) loc.areaId = aId; }
+
+  const item = await DB.getItem(S.moveItemId);
+  if (!item) return;
+  Object.assign(item, {
+    roomId: loc.roomId, roomName: loc.roomName,
+    areaId: loc.areaId, areaName: loc.areaName,
+    spotId: loc.spotId, spotName: loc.spotName,
+  });
+  await DB.saveItem(item);
+  S.items = await DB.getItemsByHome(S.homeId);
+  S.detailItem = item;
+  closeModal();
+  scheduleDriveSync();
+  go('item-detail');
+  showToast('Location updated');
 }
 
 async function confirmDeleteItem(id) {

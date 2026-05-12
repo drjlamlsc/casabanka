@@ -327,6 +327,10 @@ em { color: var(--txt2); font-style: italic; }
 }
 .data-btn:active { background: var(--bg); color: var(--accent); border-color: var(--accent); }
 
+/* ─── Move item modal ─── */
+.move-divider { display:flex; align-items:center; gap:var(--sp-sm); font-size:12px; font-weight:700; color:var(--txt3); text-transform:uppercase; letter-spacing:0.5px; margin:var(--sp-md) 0; }
+.move-divider::before, .move-divider::after { content:''; flex:1; height:1px; background:var(--border); }
+
 /* ─── Utility ─── */
 .hidden          { display: none !important; }
 .text-center     { text-align: center; }
