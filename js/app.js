@@ -1,4 +1,4 @@
-const VERSION = 'v1.4 · 2026-05-12 15:30';
+const VERSION = 'v1.5 · 2026-05-12 16:00';
 
 // ─────────────────────────────────────────────
 // State
@@ -8,12 +8,14 @@ let S = {
   modal: null,
   homes: [],
   apiKey: '',
-  // google drive
-  driveClientId: localStorage.getItem('cb_drive_client_id') || '',
-  driveEnabled: localStorage.getItem('cb_drive_enabled') === 'true',
-  driveLastSync: localStorage.getItem('cb_drive_last_sync') || null,
-  driveStatus: 'idle',        // 'idle' | 'syncing' | 'error'
-  driveNeedsReconnect: false,
+  // github sync
+  ghEnabled:  localStorage.getItem('cb_gh_enabled') === 'true',
+  ghToken:    localStorage.getItem('cb_gh_token')   || '',
+  ghOwner:    localStorage.getItem('cb_gh_owner')   || '',
+  ghRepo:     localStorage.getItem('cb_gh_repo')    || 'casabanka-data',
+  ghFileSha:  localStorage.getItem('cb_gh_sha')     || null,
+  ghLastSync: localStorage.getItem('cb_gh_last_sync') || null,
+  ghStatus:   'idle',  // 'idle' | 'syncing' | 'error'
   // current home
   homeId: null,
   home: null,
@@ -88,7 +90,7 @@ function buildModal() {
     case 'tree-add':       return modalTreeAdd();
     case 'location-pick':  return modalLocationPick();
     case 'menu':           return modalMenu();
-    case 'drive-setup':    return modalDriveSetup();
+    case 'gh-setup':       return modalGHSetup();
     case 'move-item':      return modalMoveItem();
     default:               return '';
   }
@@ -460,46 +462,35 @@ function buildBreadcrumb(path) {
 }
 
 function buildDriveBar() {
-  if (!S.driveEnabled) {
+  if (!S.ghEnabled) {
     return `<div class="drive-bar drive-bar--off">
-      <span class="drive-bar-icon">☁️</span>
+      <span class="drive-bar-icon">🐙</span>
       <div class="drive-bar-info">
-        <span class="drive-bar-title">Google Drive sync</span>
+        <span class="drive-bar-title">GitHub sync</span>
         <span class="drive-bar-sub">Auto-save &amp; load across all devices</span>
       </div>
-      <button class="btn btn-sm btn-secondary" data-action="open-drive-setup">Connect</button>
+      <button class="btn btn-sm btn-secondary" data-action="open-gh-setup">Connect</button>
     </div>`;
   }
 
-  if (S.driveNeedsReconnect) {
-    return `<div class="drive-bar drive-bar--warn">
-      <span class="drive-bar-icon">⚠️</span>
-      <div class="drive-bar-info">
-        <span class="drive-bar-title">Drive session expired</span>
-        <span class="drive-bar-sub">Tap to reconnect</span>
-      </div>
-      <button class="btn btn-sm btn-secondary" data-action="reconnect-drive">Reconnect</button>
-    </div>`;
-  }
-
-  const syncLabel = S.driveStatus === 'syncing' ? 'Saving…'
-    : S.driveStatus === 'error' ? 'Sync failed'
-    : S.driveLastSync ? 'Synced ' + timeAgo(S.driveLastSync)
+  const syncLabel = S.ghStatus === 'syncing' ? 'Saving…'
+    : S.ghStatus === 'error' ? 'Sync failed — tap ↻ to retry'
+    : S.ghLastSync ? 'Synced ' + timeAgo(S.ghLastSync)
     : 'Not yet synced';
 
-  const dotClass = S.driveStatus === 'syncing' ? 'dot-pulse'
-    : S.driveStatus === 'error' ? 'dot-error'
+  const dotClass = S.ghStatus === 'syncing' ? 'dot-pulse'
+    : S.ghStatus === 'error' ? 'dot-error'
     : 'dot-ok';
 
   return `<div class="drive-bar drive-bar--on">
-    <span class="drive-bar-icon">☁️</span>
+    <span class="drive-bar-icon">🐙</span>
     <div class="drive-bar-info">
-      <span class="drive-bar-title"><span class="dot ${dotClass}"></span> Google Drive</span>
+      <span class="drive-bar-title"><span class="dot ${dotClass}"></span> GitHub · ${esc(S.ghRepo)}</span>
       <span class="drive-bar-sub">${syncLabel}</span>
     </div>
-    <button class="btn btn-sm btn-ghost" data-action="sync-drive-now"
-      ${S.driveStatus === 'syncing' ? 'disabled' : ''}>↻ Sync</button>
-    <button class="btn btn-sm btn-ghost text-danger" data-action="disconnect-drive">✕</button>
+    <button class="btn btn-sm btn-ghost" data-action="sync-gh-now"
+      ${S.ghStatus === 'syncing' ? 'disabled' : ''}>↻ Sync</button>
+    <button class="btn btn-sm btn-ghost text-danger" data-action="disconnect-gh">✕</button>
   </div>`;
 }
 
@@ -936,61 +927,45 @@ function modalMoveItem() {
   </div>`;
 }
 
-function modalDriveSetup() {
+function modalGHSetup() {
   return `<div class="modal-overlay">
     <div class="modal" style="max-height:90dvh;overflow-y:auto">
       <div class="modal-handle"></div>
       <div class="modal-header">
-        <span class="modal-title">Connect Google Drive</span>
+        <span class="modal-title">Connect GitHub Sync</span>
         <button class="modal-close" data-action="close-modal">✕</button>
       </div>
       <div class="modal-body">
         <p class="text-muted text-sm" style="margin-bottom:var(--sp-md)">
-          Your data will auto-save to a private file in your Google Drive and load automatically on any device.
+          Your data will be saved as a JSON file in a private GitHub repository and loaded automatically on every device.
         </p>
 
         <div class="alert alert-info mb-md">
-          <span class="alert-icon">🔑</span>
+          <span class="alert-icon">🔒</span>
           <div class="alert-content">
-            <div class="alert-title">One-time Google setup (5 min)</div>
-            <div class="alert-text">You need a free Google Cloud Client ID. Follow these steps:</div>
+            <div class="alert-title">Use a private repository</div>
+            <div class="alert-text">Your inventory data (including photos) will be stored in this repo. Create a new <strong>private</strong> repo at github.com/new — name it anything, e.g. <code>casabanka-data</code>.</div>
           </div>
         </div>
 
-        <ol class="drive-setup-steps">
-          <li>Go to <strong>console.cloud.google.com</strong> and sign in</li>
-          <li>Create a new project (any name, e.g. "Casabanka")</li>
-          <li>Search for <strong>Google Drive API</strong> → Enable it</li>
-          <li>Go to <strong>APIs &amp; Services → OAuth consent screen</strong>
-            <ul>
-              <li>Choose <em>External</em> → Create</li>
-              <li>Fill in App name (e.g. "Casabanka") and your email</li>
-              <li>Skip scopes → Save and Continue through all steps</li>
-              <li>On the last page, add your Google account as a <strong>Test user</strong></li>
-            </ul>
-          </li>
-          <li>Go to <strong>APIs &amp; Services → Credentials</strong>
-            <ul>
-              <li>Click <em>+ Create Credentials → OAuth client ID</em></li>
-              <li>Application type: <strong>Web application</strong></li>
-              <li>Under <em>Authorised JavaScript origins</em>, add:<br>
-                <code>http://localhost:8080</code>
-              </li>
-              <li>Click Create → copy the <strong>Client ID</strong></li>
-            </ul>
-          </li>
-        </ol>
-
-        <div class="form-group" style="margin-top:var(--sp-md)">
-          <label class="form-label">Your Client ID</label>
-          <input class="form-input" id="driveClientIdInput"
-            placeholder="xxxxxxxx.apps.googleusercontent.com"
-            value="${esc(S.driveClientId)}" autocomplete="off">
+        <div class="form-group">
+          <label class="form-label">GitHub Personal Access Token</label>
+          <input class="form-input" id="ghTokenInput" type="password"
+            placeholder="ghp_…"
+            value="${esc(S.ghToken)}" autocomplete="off">
+          <p class="text-sm text-muted mt-sm">Needs <strong>repo</strong> scope. Create one at github.com → Settings → Developer settings → Personal access tokens.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Repository name</label>
+          <input class="form-input" id="ghRepoInput"
+            placeholder="casabanka-data"
+            value="${esc(S.ghRepo)}">
+          <p class="text-sm text-muted mt-sm">Just the repo name, not the full URL. The repo must already exist.</p>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary flex-1" data-action="close-modal">Cancel</button>
-        <button class="btn btn-primary flex-1" data-action="confirm-drive-connect">Connect →</button>
+        <button class="btn btn-primary flex-1" data-action="confirm-gh-connect">Connect →</button>
       </div>
     </div>
   </div>`;
@@ -1101,11 +1076,10 @@ function handleClick(e) {
     case 'clear-search':       S.query = ''; S.results = []; render(); break;
 
     // Drive
-    case 'open-drive-setup':     openModal({ type: 'drive-setup' }); break;
-    case 'confirm-drive-connect': confirmDriveConnect(); break;
-    case 'reconnect-drive':      reconnectDrive(); break;
-    case 'disconnect-drive':     disconnectDrive(); break;
-    case 'sync-drive-now':       syncToDrive(); break;
+    case 'open-gh-setup':        openModal({ type: 'gh-setup' }); break;
+    case 'confirm-gh-connect':   confirmGHConnect(); break;
+    case 'disconnect-gh':        disconnectGH(); break;
+    case 'sync-gh-now':          syncToGH(); break;
 
     // Data
     case 'export-data':        exportData(); break;
@@ -1201,7 +1175,7 @@ async function init() {
   S.homes = await DB.getHomes();
 
   // Drive init runs after GIS script has had a chance to load
-  setTimeout(initDrive, 800);
+  setTimeout(initGHSync, 800);
 
   if (!S.apiKey) {
     go('api-key');
@@ -1818,133 +1792,119 @@ function showToast(msg) {
 }
 
 // ─────────────────────────────────────────────
-// Google Drive sync
+// GitHub sync
 // ─────────────────────────────────────────────
 let _syncTimer = null;
 
-function scheduleDriveSync() {
-  if (!S.driveEnabled) return;
+function scheduleDriveSync() {   // kept as name so all call-sites still work
+  if (!S.ghEnabled) return;
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(syncToDrive, 3000);
+  _syncTimer = setTimeout(syncToGH, 10000);  // 10s debounce — each save = 1 commit
 }
 
-async function syncToDrive() {
-  if (!S.driveEnabled) return;
-  setDriveStatus('syncing');
+async function syncToGH() {
+  if (!S.ghEnabled) return;
+  setGHStatus('syncing');
   try {
     const payload = await buildExportPayload();
-    await GDrive.save(payload);
-    S.driveLastSync = new Date().toISOString();
-    localStorage.setItem('cb_drive_last_sync', S.driveLastSync);
-    setDriveStatus('idle');
+    const newSha = await GHSync.save(S.ghToken, S.ghOwner, S.ghRepo, payload, S.ghFileSha);
+    S.ghFileSha  = newSha;
+    S.ghLastSync = new Date().toISOString();
+    localStorage.setItem('cb_gh_sha',       newSha  || '');
+    localStorage.setItem('cb_gh_last_sync', S.ghLastSync);
+    setGHStatus('idle');
   } catch (err) {
-    if (err.message === 'auth_expired') {
-      S.driveNeedsReconnect = true;
-    }
-    setDriveStatus('error');
+    console.error('GitHub sync error:', err.message);
+    setGHStatus('error');
   }
 }
 
-async function loadFromDrive() {
-  const payload = await GDrive.load();
-  if (!payload) return false;
-  for (const home of payload.homes || [])    await DB.saveHome(home);
+async function loadFromGH() {
+  const result = await GHSync.load(S.ghToken, S.ghOwner, S.ghRepo);
+  if (!result) return false;
+  const { content: payload, sha } = result;
+  for (const home   of payload.homes   || []) await DB.saveHome(home);
   for (const layout of payload.layouts || []) await DB.saveLayout(layout.homeId, layout.data);
-  for (const item of payload.items || [])    await DB.saveItem(item);
-  S.driveLastSync = new Date().toISOString();
-  localStorage.setItem('cb_drive_last_sync', S.driveLastSync);
+  for (const item   of payload.items   || []) await DB.saveItem(item);
+  S.ghFileSha  = sha;
+  S.ghLastSync = new Date().toISOString();
+  localStorage.setItem('cb_gh_sha',       sha);
+  localStorage.setItem('cb_gh_last_sync', S.ghLastSync);
   return true;
 }
 
-async function initDrive() {
-  if (!S.driveEnabled || !S.driveClientId) return;
-  const ready = GDrive.setup(S.driveClientId);
-  if (!ready) return; // GIS script not loaded yet — will retry on reconnect
+async function initGHSync() {
+  if (!S.ghEnabled || !S.ghToken || !S.ghOwner) return;
   try {
-    await GDrive.ensureToken(); // silent; no popup
-    await loadFromDrive();
+    await loadFromGH();
     S.homes = await DB.getHomes();
-  } catch (_) {
-    // Needs user interaction — show reconnect button
-    S.driveNeedsReconnect = true;
-  }
-}
-
-async function confirmDriveConnect() {
-  const clientId = document.getElementById('driveClientIdInput')?.value?.trim();
-  if (!clientId) { alert('Please paste your Client ID.'); return; }
-
-  const ready = GDrive.setup(clientId);
-  if (!ready) {
-    alert('Google Identity Services failed to load. Check your internet connection and try again.');
-    return;
-  }
-
-  try {
-    await GDrive.requestToken('select_account'); // show account picker on first connect
-    S.driveClientId = clientId;
-    S.driveEnabled = true;
-    S.driveNeedsReconnect = false;
-    localStorage.setItem('cb_drive_client_id', clientId);
-    localStorage.setItem('cb_drive_enabled', 'true');
-
-    closeModal();
-    showToast('Connected! Loading Drive data…');
-
-    const hadData = await loadFromDrive();
-    S.homes = await DB.getHomes();
-    if (!hadData) await syncToDrive(); // push existing local data up
-    go('home-selector');
-    showToast('Google Drive connected ✓');
+    setGHStatus('idle');
+    render();
   } catch (err) {
-    alert('Could not connect: ' + err.message + '\n\nMake sure http://localhost:8080 is listed under Authorised JavaScript origins in your Google Cloud credentials.');
+    console.warn('GitHub sync init error:', err.message);
+    setGHStatus('error');
   }
 }
 
-async function reconnectDrive() {
-  if (!S.driveClientId) { openModal({ type: 'drive-setup' }); return; }
-  const ready = GDrive.setup(S.driveClientId);
-  if (!ready) { alert('Google Identity Services not loaded.'); return; }
+async function confirmGHConnect() {
+  const token = document.getElementById('ghTokenInput')?.value?.trim();
+  const repo  = document.getElementById('ghRepoInput')?.value?.trim();
+  if (!token) { alert('Please enter your GitHub token.'); return; }
+  if (!repo)  { alert('Please enter a repository name.'); return; }
+
+  closeModal();
+  showToast('Connecting to GitHub…');
+
   try {
-    await GDrive.requestToken('');
-    S.driveNeedsReconnect = false;
-    setDriveStatus('idle');
-    await loadFromDrive();
+    const owner = await GHSync.getOwner(token);
+    S.ghToken   = token;
+    S.ghRepo    = repo;
+    S.ghOwner   = owner;
+    S.ghEnabled = true;
+    S.ghFileSha = null;
+    localStorage.setItem('cb_gh_token',   token);
+    localStorage.setItem('cb_gh_repo',    repo);
+    localStorage.setItem('cb_gh_owner',   owner);
+    localStorage.setItem('cb_gh_enabled', 'true');
+    localStorage.removeItem('cb_gh_sha');
+
+    const hadData = await loadFromGH();
     S.homes = await DB.getHomes();
+    if (!hadData) await syncToGH();   // push local data up on first connect
     go('home-selector');
-    showToast('Drive reconnected ✓');
+    showToast(`GitHub connected · ${owner}/${repo} ✓`);
   } catch (err) {
-    alert('Reconnect failed: ' + err.message);
+    S.ghEnabled = false;
+    alert('Could not connect: ' + err.message + '\n\nCheck your token has the "repo" scope and the repository exists.');
   }
 }
 
-function disconnectDrive() {
-  if (!confirm('Disconnect Google Drive?\n\nYour local data stays intact. Drive sync will stop.')) return;
-  GDrive.signOut();
-  S.driveEnabled = false;
-  S.driveNeedsReconnect = false;
-  S.driveLastSync = null;
-  S.driveStatus = 'idle';
-  localStorage.setItem('cb_drive_enabled', 'false');
-  localStorage.removeItem('cb_drive_last_sync');
+function disconnectGH() {
+  if (!confirm('Disconnect GitHub sync?\n\nYour local data stays intact.')) return;
+  S.ghEnabled  = false;
+  S.ghToken    = '';
+  S.ghOwner    = '';
+  S.ghFileSha  = null;
+  S.ghLastSync = null;
+  S.ghStatus   = 'idle';
+  localStorage.setItem('cb_gh_enabled', 'false');
+  localStorage.removeItem('cb_gh_last_sync');
+  localStorage.removeItem('cb_gh_sha');
   render();
-  showToast('Drive disconnected');
+  showToast('GitHub sync disconnected');
 }
 
-function setDriveStatus(status) {
-  S.driveStatus = status;
-  // Update the drive bar in-place without full re-render
+function setGHStatus(status) {
+  S.ghStatus = status;
   const bar = document.querySelector('.drive-bar');
-  if (bar && S.driveEnabled && !S.driveNeedsReconnect) {
-    const sub = bar.querySelector('.drive-bar-sub');
-    const dot = bar.querySelector('.dot');
-    const syncBtn = bar.querySelector('[data-action="sync-drive-now"]');
+  if (bar && S.ghEnabled) {
+    const sub     = bar.querySelector('.drive-bar-sub');
+    const dot     = bar.querySelector('.dot');
+    const syncBtn = bar.querySelector('[data-action="sync-gh-now"]');
     if (sub) sub.textContent = status === 'syncing' ? 'Saving…'
       : status === 'error' ? 'Sync failed — tap ↻ to retry'
-      : S.driveLastSync ? 'Synced ' + timeAgo(S.driveLastSync) : 'Synced';
-    if (dot) {
-      dot.className = 'dot ' + (status === 'syncing' ? 'dot-pulse' : status === 'error' ? 'dot-error' : 'dot-ok');
-    }
+      : S.ghLastSync ? 'Synced ' + timeAgo(S.ghLastSync) : 'Synced';
+    if (dot) dot.className = 'dot ' + (status === 'syncing' ? 'dot-pulse' : status === 'error' ? 'dot-error' : 'dot-ok');
     if (syncBtn) syncBtn.disabled = status === 'syncing';
   }
 }
