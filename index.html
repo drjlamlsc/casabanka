@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#ffffff">
+  <title>Casabanka</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div id="app">
+    <!-- Rendered by app.js -->
+    <div class="loading-overlay" style="min-height:100dvh">
+      <div class="spinner"></div>
+      <p style="color:#6c6c70;margin-top:12px">Loading…</p>
+    </div>
+  </div>
+
+  <!--
+    ffmpeg.wasm — used for video frame extraction.
+    If this CDN is unreachable, the app silently falls back to
+    HTML5 canvas-based extraction (same result, no WASM needed).
+  -->
+  <script>
+    // Suppress ffmpeg.wasm console noise
+    const _warn = console.warn;
+    console.warn = (...a) => { if (String(a[0]).includes('ffmpeg')) return; _warn(...a); };
+  </script>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"
+          onerror="console.info('ffmpeg.wasm not loaded — canvas fallback active')"></script>
+
+  <!-- Google Identity Services — needed for Drive OAuth -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <script src="js/db.js"></script>
+  <script src="js/gdrive.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/video.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
